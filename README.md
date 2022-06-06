@@ -5,7 +5,7 @@ I have prepared a complete data description document with data sources, tips, an
 
 You can find all 54 cleaned datasets just [here](https://1drv.ms/u/s!AjVW0s-wFcYmhYNcpRwg-rKzRyQI_A?e=qiRv0b). <br/>
 Also, you can see every dataset coluns description [here](https://1drv.ms/b/s!AjVW0s-wFcYmhYQUfK_isaDDRLsApw?e=Yw3XB0). <br/>
-![Cover Page](/ColumnsDescriptionCover.png?raw=true "Subtitle")
+![Cover Page](/ColumnsDescriptionCover.png?raw=true "Subtitle") <br/>
 Raw data use used to create all datasets are available [right here](https://1drv.ms/u/s!AjVW0s-wFcYmhYNdqlktfMMA9XEUUA?e=u5fEJp). <br/>
 
 This repository is always going trhough updates. This is only de V.1 version - yes, the only first. If you notice some inconsistencies, please notify me. May you have comments or concerns, please, contact me. <br/>
