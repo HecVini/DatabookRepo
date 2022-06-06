@@ -1,0 +1,581 @@
+#### Load Packages ####
+library(tidyverse)
+library(lubridate)
+library(janitor)
+library(data.table)
+library(openxlsx)
+library(countrycode)
+library(ipeadatar)
+library(zoo)
+library(tidylog)
+library(WDI)
+library(httr)
+library(geobr)
+library(textclean)
+library(ggh4x)
+library(anytime)
+
+#### Default Patterns ####
+datasets_directory = '/Users/hec_vini/OneDrive - Fundacao Getulio Vargas - FGV/gv_agro/datasets/'
+project_directory = '/Users/hec_vini/Library/CloudStorage/OneDrive-Personal/r_basics/DataRepo/'
+clean_data = '/Users/hec_vini/Library/CloudStorage/OneDrive-Personal/r_basics/DataBook_Repo/CleanData/'
+#Just change these pathways to your folders
+
+'%!in%' = function(x,y)!('%in%'(x,y))
+
+ipca.R = ipeadata(code = 'PRECOS12_IPCA12') %>% tibble()
+ipca = ipca.R %>% subset(select = c(2,3)) %>% setnames(c('date','inflation_index'))
+ipca = ipca %>% filter(date >= ymd('1995-12-01'), date <= ymd('2020-12-01'))
+write.csv(ipca,file = paste0(clean_data,'ipca.csv'))
+
+ipca_monthly = ipca %>% mutate(inflation_rate = (inflation_index/lag(inflation_index)))
+ipca_monthly = ipca_monthly %>% arrange(desc(date))
+ipca_monthly = ipca_monthly %>% drop_na() %>% mutate(cumulative_inflation = cumprod(inflation_rate)) 
+ipca_monthly = ipca_monthly %>% arrange(date)
+ipca_monthly = ipca_monthly %>% subset(select = c(date,cumulative_inflation))
+write.csv(ipca_monthly,file = paste0(clean_data,'ipca_monthly','.csv'))
+
+ipca_yearly = ipca %>% filter(month(date) %in% c(1,12), year(date) >= 1995)
+ipca_yearly = ipca_yearly %>% mutate(inflation_rate = (inflation_index/lag(inflation_index)))
+ipca_yearly = ipca_yearly %>% arrange(desc(date))
+ipca_yearly = ipca_yearly %>% drop_na() %>% mutate(cumulative_inflation = cumprod(inflation_rate)) 
+ipca_yearly = ipca_yearly %>% arrange(date)
+ipca_yearly = ipca_yearly %>% subset(select = c(date,cumulative_inflation)) %>% filter(month(date) == 12)
+ipca_yearly = ipca_yearly %>% mutate(year = year(date)) %>% subset(select = c(year,cumulative_inflation))
+write.csv(ipca_yearly,file = paste0(clean_data,'ipca_yearly','.csv'))
+
+deflator_implicito.R = ipeadata(code = 'SCN10_DIPIBG10') %>% tibble()
+deflator_implicito = deflator_implicito.R %>% subset(select = c(2,3)) %>% setnames(c('date','inflation_rate'))
+deflator_implicito = deflator_implicito %>% filter(date >= ymd('1995-12-01'), date <= ymd('2021-12-01'))
+deflator_implicito = deflator_implicito %>% mutate(year = year(date))
+deflator_implicito = deflator_implicito %>% mutate(inflation_rate = 1+(inflation_rate/100))
+deflator_implicito = deflator_implicito %>% subset(select = c(year,inflation_rate))
+deflator_implicito = deflator_implicito %>% arrange(desc(year))
+deflator_implicito = deflator_implicito %>% drop_na() %>% mutate(cumulative_inflation = cumprod(inflation_rate)) 
+deflator_implicito = deflator_implicito %>% arrange(year)
+deflator_implicito = deflator_implicito %>% subset(select = c(year,cumulative_inflation))
+write.csv(deflator_implicito,file = paste0(clean_data,'deflator_implicito','.csv'))
+
+municipalities_codes.R = read.xlsx(paste0(datasets_directory,'divisao_territorial_brasileira_v2020.xlsx'),1) %>% tibble() %>% clean_names()
+states_codes.R = read.xlsx(paste0(datasets_directory,'divisao_territorial_brasileira_v2020.xlsx'),3) %>% tibble() %>% clean_names()
+immediate_region_codes.R = read.xlsx(paste0(datasets_directory,'divisao_territorial_brasileira_v2020.xlsx'),1) %>% tibble() %>% clean_names()
+municipalities_biomes.R = read.xlsx(paste0(datasets_directory,'municipios_biomas.xlsx'),1) %>% tibble() %>% clean_names()
+microregion_codes.R = read.xlsx(paste0(datasets_directory,'divisao_territorial_brasileira_v2020.xlsx'),1) %>% tibble() %>% clean_names()
+
+states_codes = states_codes.R %>% setnames(c('id_state','code_state'))
+states_codes[28,1] = 1
+states_codes[28,2] = 'BR'
+write.csv(states_codes,file = paste0(clean_data,'states_codes','.csv'))
+
+municipalities_codes = municipalities_codes.R %>% subset(select = c(codigo_municipio_completo,nome_municipio,uf))
+colnames(municipalities_codes) = c('id_municipality','name_municipality','id_state')
+municipalities_codes[,c(1,3)] = lapply(municipalities_codes[,c(1,3)], function(x) as.numeric(as.character(x)))
+municipalities_codes = right_join(municipalities_codes,states_codes, by = 'id_state')
+write.csv(municipalities_codes,file = paste0(clean_data,'municipalities_codes','.csv'))
+
+immediate_region_codes = immediate_region_codes.R %>% 
+  subset(select = c(regiao_geografica_imediata,nome_regiao_geografica_imediata,codigo_municipio_completo,uf)) %>%
+  setnames(c('id_immediate_region','name_immediate_region','id_municipality','id_state'))
+immediate_region_codes[,c(1,3,4)] = lapply(immediate_region_codes[,c(1,3,4)], function(x) as.numeric(as.character(x)))
+immediate_region_codes = right_join(immediate_region_codes,states_codes, by = 'id_state')
+immediate_region_codes = immediate_region_codes %>% subset(select = -code_state)
+write.csv(immediate_region_codes,file = paste0(clean_data,'immediate_region_codes','.csv'))
+
+municipalities_codes_6n = municipalities_codes %>% mutate(id_municipality_6n = gsub('.{1}$', '', id_municipality))
+municipalities_codes_6n = municipalities_codes_6n %>% subset(select = c(id_municipality,id_municipality_6n))
+municipalities_codes_6n[,2] = lapply(municipalities_codes_6n[,2], function(x) as.numeric(as.character(x)))
+municipalities_biomes = municipalities_biomes.R %>% subset(select = c(1,3)) %>% setnames(c('id_municipality','biome'))
+municipalities_biomes = municipalities_biomes %>% mutate(id_state = str_extract(id_municipality, "^.{2}"))
+municipalities_biomes = municipalities_biomes %>% subset(select = c(1,3,2))
+municipalities_biomes[,2] = lapply(municipalities_biomes[,2], function(x) as.numeric(as.character(x)))
+write.csv(municipalities_biomes,file = paste0(clean_data,'municipalities_biomes','.csv'))
+
+microregion_codes = microregion_codes.R %>% subset(select = c(microrregiao_geografica,nome_microrregiao,codigo_municipio_completo,uf))
+microregion_codes = microregion_codes %>% setnames(c('id_microregion','name_microregion','id_municipality','id_state'))
+microregion_codes = microregion_codes %>% mutate(id_microregion = paste0(id_state,id_microregion))
+microregion_codes[,c(1,3,4)] = lapply(microregion_codes[,c(1,3,4)], function(x) as.numeric(as.character(x)))
+length(unique(microregion_codes$id_microregion))
+write.csv(microregion_codes,file = paste0(clean_data,'microregion_codes','.csv'))
+
+eu27_iso3c = c("AUT","BEL","BGR","HRV","CYP","CZE","DNK","EST","FIN", "FRA","DEU","GRC","HUN",
+               "IRL","ITA","LVA","LTU","LUX", "MLT","NLD","POL","PRT","ROU","SVK","SVN","ESP","SWE")
+write.csv(eu27_iso3c,file = paste0(clean_data,'eu27_iso3c','.csv'))
+
+world_bank_income = read.xlsx(paste0(datasets_directory,'/world_bank_income_levels.xlsx'),4) %>% tibble() %>% clean_names()
+
+#### GHG Emissions ####
+
+## CAIT Database ##
+main_sectors_cait = c('Agriculture','Energy','Land-Use Change and Forestry','Waste','Industrial Processes')
+write.csv(main_sectors_cait,file = paste0(clean_data,'main_sectors_cait','.csv'))
+
+cait.R = read.csv(paste0(datasets_directory,'/cait_sectors/historical_emissions.csv')) %>% tibble() %>% clean_names()
+cait = cait.R %>% subset(select = c(country,sector,6:34))
+cait$iso3c = countrycode(cait$country, origin = 'country.name', destination = 'iso3c',
+                         custom_match = c('European Union (27)' = 'EUR', 'Micronesia' = 'FSM', 'World' = 'WLD'))
+
+cait = cait %>% gather(year, emissions, x2018:x1990, factor_key=FALSE)
+cait = cait %>% subset(select = c(year,iso3c,sector,emissions))
+cait[,1] = lapply(cait[,1], function(x) as.character(gsub("x", "", x)))
+cait[,c(1,4)] = lapply(cait[,c(1,4)], function(x) as.numeric(as.character(x)))
+cait = cait %>% arrange(iso3c,year)
+cait = cait %>% filter(iso3c %!in% c('EUR','WLD'))
+cait = cait %>% mutate(unit = 'Mt CO2e')
+write.csv(cait,file = paste0(clean_data,'cait','.csv'))
+
+cait_all_sectors = cait %>% subset(select = -unit)
+cait_all_sectors = cait_all_sectors %>% mutate(iso3c = case_when(iso3c %in% eu27_iso3c ~ 'EUR', TRUE ~ as.character(iso3c)))
+cait_all_sectors = cait_all_sectors %>% group_by(year,iso3c,sector) %>% summarise(emissions = sum(emissions))
+write.csv(cait_all_sectors,file = paste0(clean_data,'cait_all_sectors','.csv'))
+
+cait_main_sectors = cait_all_sectors %>% filter(sector %in% main_sectors_cait)
+write.csv(cait_main_sectors,file = paste0(clean_data,'cait_main_sectors','.csv'))
+
+## Global Carbon Project ##
+gcp.R = read.xlsx(paste0(datasets_directory,'/owid_co2.xlsx')) %>% tibble() %>% clean_names()
+
+gcp_all_countries = gcp.R %>% subset(select = c(year,iso_code,country,co2)) %>% setnames(c('year','iso3c','country_name','emissions'))
+gcp_all_countries = gcp_all_countries %>% 
+  mutate(iso3c = case_when(country_name == 'International transport' ~ 'INTL', TRUE ~ as.character(iso3c)))
+write.csv(gcp_all_countries,file = paste0(clean_data,'gcp_all_countries','.csv'))
+
+gcp_world = gcp_all_countries %>% filter(country_name == 'World')
+gcp_world[,2] = 'WLD'
+write.csv(gcp_world,file = paste0(clean_data,'gcp_world','.csv'))
+
+gcp = gcp_all_countries %>% filter(iso3c != 'OWID_WRL')
+gcp = gcp %>% 
+  mutate(iso3c = case_when(country_name == 'Micronesia (country)' ~ 'FSM',
+                           country_name == 'Panama Canal Zone' ~ 'PAN',
+                           iso3c == 'OWID_KOS' ~ 'KOS', iso3c %in% eu27_iso3c ~ 'EUR',
+                           TRUE ~ as.character(iso3c)))
+gcp = gcp %>% drop_na(emissions)
+gcp = gcp %>% subset(select = -country_name)
+gcp = gcp %>% group_by(year,iso3c) %>% summarise(emissions = sum(emissions)) %>% ungroup()
+gcp = gcp %>% arrange(iso3c,year)
+gcp = gcp %>% mutate(unit = 'Mt CO2')
+write.csv(gcp,file = paste0(clean_data,'gcp','.csv'))
+
+## EDGAR ##
+eu27_iso3c_edgar = c(eu27_iso3c,'FRA, MCO','ITA, SMN, VAT','ESP, AND','CHE, LIE')
+write.csv(eu27_iso3c_edgar,file = paste0(clean_data,'eu27_iso3c_edgar','.csv'))
+
+edgar.R = read.xlsx(paste0(datasets_directory,'/edgar_v6.xlsx'),7) %>% tibble() %>% clean_names() 
+edgar = edgar.R %>% gather(year, emissions, x1970:x2018, factor_key=FALSE) %>% tibble()
+edgar[,3] = lapply(edgar[,3], function(x) as.character(gsub("x", "", x)))
+edgar[,c(3,4)] = lapply(edgar[,c(3,4)], function(x) as.numeric(as.character(x)))
+edgar = edgar %>% drop_na(emissions)
+edgar$iso3c = countrycode(edgar$country, origin = 'country.name', destination = 'iso3c',
+                          custom_match = c('France and Monaco' = 'FRA, MCO',
+                                           'Israel and Palestine, State of' = 'ISR, PSE',
+                                           'Italy, San Marino and the Holy See' = 'ITA, SMN, VAT',
+                                           'Spain and Andorra' = 'ESP, AND',
+                                           'Switzerland and Liechtenstein' = 'CHE, LIE',
+                                           'International Aviation' = 'IATA',
+                                           'International Shipping' = 'IMO',
+                                           'Serbia and Montenegro' = 'SRB, MNE'))
+edgar = edgar %>% subset(select = c(year,iso3c,sector,emissions))
+edgar = edgar %>% arrange(iso3c,year)
+edgar = edgar %>% mutate(iso3c = case_when(iso3c %in% eu27_iso3c_edgar ~ 'EUR', TRUE ~ as.character(iso3c)))
+edgar = edgar %>% group_by(year,iso3c,sector) %>% summarise(emissions = sum(emissions)) %>% ungroup()
+edgar = edgar %>% mutate(unit = 'Mt CO2e')
+write.csv(edgar,file = paste0(clean_data,'edgar','.csv'))
+
+# Quarta Comunicacao Inventario Nacional de GEE #
+cn4_sirene = '/Users/hec_vini/OneDrive - Fundacao Getulio Vargas - FGV/gv_agro/datasets/4cn_brasil/'
+sirene_sectors = c('energia','agropecuaria','industria','lulucf','residuos')
+clean_sirene_data = function(sector){
+  data.R = read.xlsx(paste0(cn4_sirene,sector,'.xlsx'),2,startRow = 5) %>% tibble() %>% clean_names()
+  data = data.R %>% setnames(c('sector',c(1990:2016)))
+  data = data %>% gather(year,co2e_emissions,c(2:28))
+  data = data %>% mutate(sector_number = str_extract(sector, "^.{1}"))
+  data[,c(2:4)] = lapply(data[,c(2:4)], function(x) as.numeric(as.character(x))) 
+  data[,3] = data[,3]/10^3
+  return(data)
+}
+cn4_brasil = tibble()
+for (i in c(1:5)) {
+  data = clean_sirene_data(sirene_sectors[i])
+  cn4_brasil = rbind(cn4_brasil,data)
+}
+cn4_brasil = cn4_brasil %>% arrange(year,sector)
+cn4_brasil = cn4_brasil %>% subset(select = c(year,sector,co2e_emissions)) %>% setnames(c('year','sector','emissions'))
+cn4_brasil = cn4_brasil %>% mutate(unit = 'Mt CO2e')
+write.csv(cn4_brasil,file = paste0(clean_data,'cn4_brasil','.csv'))
+
+cn4_brasil_main = cn4_brasil %>% 
+  filter(sector %in% c('1. Energia','2. Processos industriais e uso de produtos (IPPU)',
+                       '3. Agropecuária','4. Uso da Terra, Mudança do Uso da Terra e Florestas (LULUCF)','5. Resíduos'))
+cn4_brasil_main[,2] = lapply(cn4_brasil_main[,2], function(x) substring(x, 4))
+write.csv(cn4_brasil_main,file = paste0(clean_data,'cn4_brasil_main','.csv'))
+
+## ETS Prices ##
+eu_allowances.R = fread(paste0(datasets_directory,'/eua_allowances_futures_current.csv')) %>% tibble() %>% clean_names()
+eu_allowances = eu_allowances.R %>% subset(select = c(time,close))
+eu_allowances[,1] = lapply(eu_allowances[,1], function(x) anydate(x))
+write.csv(eu_allowances,file = paste0(clean_data,'eu_allowances','.csv'))
+
+cbl_futures.R = read.csv(paste0(datasets_directory,'/cbl_futures.csv')) %>% tibble() %>% clean_names()
+cbl_futures = cbl_futures.R %>% subset(select = c(time,close,geo2_nymex_close,ngo1_nymex_close,ngo2_nymex_close))
+cbl_futures[,1] = lapply(cbl_futures[,1], function(x) anydate(x))
+colnames(cbl_futures) = c('date','geo1','geo2','ngo1','ngo2')
+cbl_futures$ngo1[is.nan(cbl_futures$ngo1)] = NA
+cbl_futures$ngo2[is.nan(cbl_futures$ngo2)] = NA
+write.csv(cbl_futures,file = paste0(clean_data,'cbl_futures','.csv'))
+
+## Berkeley Emissions Database ##
+berkeley.R = read.xlsx(paste0(datasets_directory,'/berkeley_v4.xlsx'),2,startRow = 4) %>% clean_names() %>% tibble()
+berkeley = berkeley.R %>% mutate(iso3c = countrycode(berkeley.R$country, origin = 'country.name',
+                                                     destination = 'iso3c',custom_match = c('International' = 'INTL')))
+certifications_list = unique(berkeley$ccb_certifications)
+for (i in c(1,3:18)) {
+  berkeley[,109] = lapply(berkeley[,109], function(x) as.character(gsub(paste0('^',certifications_list[i],'$'), "SDG", x)))
+}
+berkeley[,109] = lapply(berkeley[,109], function(x) as.character(gsub(paste0('^','Verification Approved','$'), "CCB", x)))
+berkeley[,109] = lapply(berkeley[,109], function(x) as.character(gsub(paste0('^','Verification approved','$'), "CCB", x)))
+
+berkeley[,109] = lapply(berkeley[,109], function(x) as.character(gsub(paste0('^','Validation Approved','$'), 'No', x)))
+berkeley[,109] = lapply(berkeley[,109], function(x) as.character(gsub(paste0('^','Under Verification','$'), 'No', x)))
+berkeley[,109] = lapply(berkeley[,109], function(x) as.character(gsub(paste0('^','Under validation and verification','$'), 'No', x)))
+berkeley[,109] = lapply(berkeley[,109], function(x) as.character(gsub(paste0('^','Under Validation','$'), 'No', x)))
+berkeley[,109] = lapply(berkeley[,109], function(x) as.character(gsub(paste0('^','Verification approval requested','$'), 'No', x)))
+
+nr = dim(berkeley)[1]
+for (i in c(1:nr)) {if(berkeley[i,3] == 'GOLD'){berkeley[i,109] = 'SDG GS'}}
+berkeley$ccb_certifications[is.na(berkeley$ccb_certifications)] = 'No'
+
+emissions = berkeley %>% subset(select = c(project_id,iso3c,scope,type,voluntary_status,voluntary_registry,methodology_protocol,ccb_certifications,x1996_4:x2021_4))
+emissions = emissions %>% gather(year,credits,x1996_4:x2021_4)
+emissions = emissions %>% subset(select = c(year,project_id,iso3c,scope,type,credits,voluntary_status:ccb_certifications))
+emissions[,1] = lapply(emissions[,1], function(x) as.character(gsub("_4", "", x)))
+emissions[,1] = lapply(emissions[,1], function(x) as.character(gsub("x", "", x)))
+emissions[,1] = lapply(emissions[,1], function(x) as.numeric(as.character(x)))
+colnames(emissions) = c('year','id','iso3c','scope','type','credits_issued','status','registry','methodology','certifications')
+
+retirements = berkeley %>% subset(select = c(project_id,iso3c,scope,type,voluntary_status,voluntary_registry,methodology_protocol,ccb_certifications,x1996_2:x2021_2))
+retirements = retirements %>% gather(year,credits,x1996_2:x2021_2)
+retirements = retirements %>% subset(select = c(year,project_id,iso3c,scope,type,credits,voluntary_status:ccb_certifications))
+retirements[,1] = lapply(retirements[,1], function(x) as.character(gsub("_2", "", x)))
+retirements[,1] = lapply(retirements[,1], function(x) as.character(gsub("x", "", x)))
+retirements[,1] = lapply(retirements[,1], function(x) as.numeric(as.character(x)))
+colnames(retirements) = c('year','id','iso3c','scope','type','credits_retired','status','registry','methodology','certifications')
+retirements = retirements %>% subset(select = c(year,id,credits_retired)) 
+
+berkeley = right_join(emissions,retirements, by = c('year','id'))
+berkeley = berkeley %>% subset(select = c(year:type,credits_issued,credits_retired,status:certifications))
+write.csv(berkeley,file = paste0(clean_data,'berkeley','.csv'))
+
+#### Country Indicators ####
+
+## UN Population Prospects ##
+un_population.R = read.csv(paste0(datasets_directory,'/un_population.csv')) %>% tibble() %>% clean_names()
+un_population = un_population.R %>% filter(var_id == 2)
+un_population = un_population %>% subset(select = c(time,loc_id,location,pop_total))
+un_population = un_population %>% setnames(c('year','iso3n','location','population'))
+un_population = un_population %>% mutate(population =  population/10^3)
+un_population[,c(1,2)] = lapply(un_population[,c(1,2)], function(x) as.numeric(as.integer(x)))
+un_population = un_population %>% mutate(iso3c = countrycode(un_population$iso3n, origin = 'iso3n', destination = 'iso3c'))
+un_population = un_population %>% subset(select = c(year,iso3c,location,population))
+write.csv(un_population,file = paste0(clean_data,'un_population','.csv'))
+
+un_population_countries = un_population %>% drop_na(iso3c)
+un_population_countries = un_population_countries %>% subset(select = -location)
+un_population_countries = un_population_countries %>% arrange(iso3c,year)
+un_population_countries =  un_population_countries %>% 
+  mutate(iso3c = case_when(iso3c %in% eu27_iso3c ~ 'EUR', TRUE ~ as.character(iso3c)))
+un_population_countries = un_population_countries %>% group_by(year,iso3c) %>% 
+  summarise(population = sum(population)) %>% ungroup()
+write.csv(un_population_countries,file = paste0(clean_data,'un_population_countries','.csv'))
+
+## OECD GDP Projections ##
+oecd_gdp.R  = read.csv(paste0(datasets_directory,'/oecd_g20_longterm_gdpforecast.csv')) %>% tibble() %>% clean_names()
+oecd_gdp = oecd_gdp.R %>% subset(select = c(time,location,value)) %>% setnames(c('year','iso3c','gdp'))
+oecd_gdp[,1] = lapply(oecd_gdp[,1], function(x) as.numeric(as.integer(x)))
+oecd_gdp = oecd_gdp %>% mutate(gdp = gdp/10^3)
+oecd_gdp_ue = oecd_gdp %>% filter(iso3c %in% eu27_iso3c) 
+oecd_gdp_ue = oecd_gdp_ue %>% mutate(iso3c = 'EUR') 
+oecd_gdp_ue = oecd_gdp_ue %>% group_by(year,iso3c) %>% summarise(gdp = sum(gdp)) %>% ungroup()
+oecd_gdp = rbind(oecd_gdp,oecd_gdp_ue) %>% arrange(iso3c,year)
+write.csv(oecd_gdp,file = paste0(clean_data,'oecd_gdp','.csv'))
+
+## World Bank Constant GDP ##
+gdp_contanst.R = fread(paste0(datasets_directory,'/wdi_gdp_contant2015usd.csv'), sep = ',') %>% tibble() %>% row_to_names(1) %>% clean_names()
+gdp_contanst = gdp_contanst.R %>% subset(select = c(country_name,x1960:x2020))
+gdp_contanst = gdp_contanst %>% gather(year,gdp,c(2:62)) 
+gdp_contanst = gdp_contanst %>% mutate(iso3c = countrycode(gdp_contanst$country_name, origin = 'country.name.en', destination = 'iso3c'))
+gdp_contanst = gdp_contanst %>% subset(select = c(year,iso3c,country_name,gdp))
+gdp_contanst[,1] = lapply(gdp_contanst[,1], function(x) as.character(gsub("x", "", x)))
+gdp_contanst[,c(1)] = lapply(gdp_contanst[,c(1)], function(x) as.numeric(as.character(x)))
+gdp_contanst = gdp_contanst %>% arrange(country_name,year)
+write.csv(gdp_contanst,file = paste0(clean_data,'gdp_contanst','.csv'))
+
+gdp_contanst_countries = gdp_contanst %>% drop_na(iso3c,gdp)
+gdp_contanst_ue = gdp_contanst_countries %>% filter(iso3c %in% eu27_iso3c) 
+gdp_contanst_ue = gdp_contanst_ue %>% mutate(iso3c = 'EUR',country_name = 'EU27') 
+gdp_contanst_ue = gdp_contanst_ue %>% group_by(year,iso3c,country_name) %>% summarise(gdp = sum(gdp)) %>% ungroup()
+gdp_contanst_countries = rbind(gdp_contanst_countries,gdp_contanst_ue)
+gdp_contanst_countries = gdp_contanst_countries %>% arrange(iso3c,year)
+gdp_contanst_countries = gdp_contanst_countries %>% subset(select = c(year,iso3c,gdp))
+write.csv(gdp_contanst_countries,file = paste0(clean_data,'gdp_contanst_countries','.csv'))
+
+## Urban Population ##
+urban_population.R = WDI(country = 'all',extra = TRUE,indicator = 'SP.URB.TOTL.IN.ZS') %>% tibble() %>% clean_names()
+urban_population = urban_population.R %>% subset(select = c(year,iso3c,income,sp_urb_totl_in_zs))
+urban_population = urban_population %>% filter(income %in% c("High income","Upper middle income","Lower middle income","Low income"))
+urban_population = urban_population %>% arrange(iso3c,year)
+urban_population = urban_population %>% setnames(c('year','iso3c','income_level','urban_ratio'))
+write.csv(urban_population,file = paste0(clean_data,'urban_population','.csv'))
+
+## Land Use Countries ##
+landuse_fao.R = fread(paste0(datasets_directory,'/Inputs_LandUse_E_All_Data/Inputs_LandUse_E_All_Data_NOFLAG.csv')) %>% clean_names() %>% tibble()
+landuse_fao = landuse_fao.R %>% subset(select = c(area_code,item_code,item,element,y1961:y2019))
+landuse_fao[,c(1:2,5:63)] = lapply(landuse_fao[,c(1:2,5:63)], function(x) as.numeric(as.numeric(x)))
+landuse_fao = landuse_fao %>% mutate(iso3c = countrycode(landuse_fao$area_code, origin = 'fao', destination = 'iso3c'))
+landuse_fao = landuse_fao %>% subset(select = c(iso3c,item_code,item,element,y1961:y2019))
+landuse_fao = landuse_fao %>% gather(year,area,y1961:y2019)
+landuse_fao[,5] = lapply(landuse_fao[,5], function(x) as.character(gsub("y", "", x)))
+landuse_fao[,5] = lapply(landuse_fao[,5], function(x) as.numeric(as.character(x)))
+landuse_fao = landuse_fao %>% drop_na(iso3c)
+landuse_fao = landuse_fao %>% filter(element != "Carbon stock in living biomass")
+colnames(landuse_fao) = c('iso3c','code_item','name_item','element','year','area')
+landuse_fao = landuse_fao %>% subset(select = c(year,iso3c:element,area))
+landuse_fao = landuse_fao %>% subset(select = -element)
+landuse_fao_ue = landuse_fao %>% filter(iso3c %in% eu27_iso3c) 
+landuse_fao_ue = landuse_fao_ue %>% drop_na(area)
+landuse_fao_ue = landuse_fao_ue %>% mutate(iso3c = 'EUR') 
+landuse_fao_ue = landuse_fao_ue %>% group_by(year,iso3c,code_item,name_item) %>% summarise(area = sum(area)) %>% ungroup()
+landuse_fao = rbind(landuse_fao,landuse_fao_ue) %>% arrange(iso3c,year,code_item)
+write.csv(landuse_fao,file = paste0(clean_data,'landuse_fao','.csv'))
+
+## Land Cover Countries ##
+landcover_fao.R = fread(paste0(datasets_directory,'/Environment_LandCover_E_All_Data/Environment_LandCover_E_All_Data_NOFLAG.csv')) %>% clean_names() %>% tibble()
+landcover_fao = landcover_fao.R %>% subset(select = c(area_code,item_code,item,element,y1992:y2019))
+landcover_fao[,c(1:2,5:32)] = lapply(landcover_fao[,c(1:2,5:32)], function(x) as.numeric(as.numeric(x)))
+landcover_fao = landcover_fao %>% mutate(iso3c = countrycode(landcover_fao$area_code, origin = 'fao', destination = 'iso3c'))
+landcover_fao = landcover_fao %>% subset(select = c(iso3c,item_code,item,element,y1992:y2019))
+landcover_fao = landcover_fao %>% gather(year,area,y1992:y2019)
+landcover_fao[,5] = lapply(landcover_fao[,5], function(x) as.character(gsub("y", "", x)))
+landcover_fao[,5] = lapply(landcover_fao[,5], function(x) as.numeric(as.character(x)))
+landcover_fao = landcover_fao %>% drop_na(iso3c)
+colnames(landcover_fao) = c('iso3c','code_item','name_item','name_element','year','area')
+landcover_fao = landcover_fao %>% subset(select = c(year,iso3c:name_element,area))
+write.csv(landcover_fao,file = paste0(clean_data,'landcover_fao','.csv'))
+
+## Production Countries ##
+production_fao.R = fread(paste0(datasets_directory,'/Production_Crops_Livestock_E_All_Data_(Normalized)/Production_Crops_Livestock_E_All_Data_(Normalized).csv')) %>% clean_names() %>% tibble()
+production_fao = production_fao.R %>% subset(select = c(year,area_code,item_code,item,element,value,unit,flag))
+production_fao = production_fao %>% mutate(iso3c = countrycode(production_fao$area_code, origin = 'fao', destination = 'iso3c'))
+production_fao = production_fao %>% subset(select = c(year,iso3c,item_code,item,element,value,unit,flag))
+production_fao = production_fao %>% drop_na(iso3c)
+colnames(production_fao) = c('year','iso3c','code_item','name_item','element','value','unit','flag')
+production_fao[,c(1,3,6)] = lapply(production_fao[,c(1,3,6)], function(x) as.numeric(as.numeric(x)))
+production_fao = production_fao %>% arrange(iso3c,year,code_item)
+production_fao[,8] = lapply(production_fao[,8], function(x) as.character(as.character(x)))
+write.csv(production_fao,file = paste0(clean_data,'production_fao','.csv'))
+
+#### Brazil in Numbers ####
+
+## Populacao - EstimaPop ##
+populacao2007.R = fread(paste0(datasets_directory,'contagem_pop_2007.csv'),encoding = 'UTF-8') %>% tibble() %>% clean_names()
+populacao2007 = populacao2007.R %>% subset(select = c(ano,cod,v5)) %>% setnames(c('year','id_municipality','population'))
+populacao2007[] = lapply(populacao2007[], function(x) as.numeric(as.numeric(x)))
+
+populacao2010.R = fread(paste0(datasets_directory,'pop_censo_2010.csv'),encoding = 'UTF-8') %>% tibble() %>% clean_names()
+populacao2010 = populacao2010.R %>% subset(select = c(2,1,5)) %>% setnames(c('year','id_municipality','population'))
+populacao2010[] = lapply(populacao2010[], function(x) as.numeric(as.character(x)))
+populacao2010 = populacao2010 %>% drop_na()
+\
+populacao.R = fread(paste0(datasets_directory,'est_pop_brasil.csv'),encoding = 'UTF-8') %>% tibble() %>% clean_names()
+populacao = populacao.R %>% subset(select = c(ano,municipio,v4)) %>% setnames(c('year','id_municipality','population'))
+populacao[] = lapply(populacao[], function(x) as.numeric(as.numeric(x)))
+populacao = populacao %>% drop_na()
+
+population_municipalities = rbind(populacao,populacao2007,populacao2010) %>% arrange(id_municipality,year)
+population_municipalities = full_join(population_municipalities,immediate_region_codes, by = 'id_municipality')
+population_municipalities = population_municipalities %>% 
+  subset(select = c(year,id_state,id_immediate_region,id_municipality,population))
+population_municipalities = population_municipalities %>% drop_na(population)
+write.csv(population_municipalities,file = paste0(clean_data,'population_municipalities','.csv'))
+
+## PIB Cidades ##
+munnicipalities_sectoral_gdp.R = read.csv(paste0(datasets_directory,'/sidra_pib_municipal.csv'),encoding = 'UTF-8',header = FALSE) %>% 
+  tibble() %>% row_to_names(2) %>% clean_names()
+munnicipalities_sectoral_gdp = munnicipalities_sectoral_gdp.R %>% subset(select = c(ano,municipio,variavel,x))
+munnicipalities_sectoral_gdp[,c(1,2,4)] = lapply(munnicipalities_sectoral_gdp[,c(1,2,4)], function(x) as.numeric(as.character(x)))
+munnicipalities_sectoral_gdp = munnicipalities_sectoral_gdp %>% setnames(c('year','id_municipality','sector','gdp'))
+munnicipalities_sectoral_gdp = munnicipalities_sectoral_gdp %>% drop_na(gdp)
+munnicipalities_sectoral_gdp = full_join(munnicipalities_sectoral_gdp,deflator_implicito,by = 'year')
+munnicipalities_sectoral_gdp = munnicipalities_sectoral_gdp %>% mutate(gdp_deflator = gdp*cumulative_inflation)
+munnicipalities_sectoral_gdp = munnicipalities_sectoral_gdp %>% subset(select = -cumulative_inflation) %>% drop_na(gdp)
+munnicipalities_sectoral_gdp = full_join(munnicipalities_sectoral_gdp,ipca_yearly,by = 'year')
+munnicipalities_sectoral_gdp = munnicipalities_sectoral_gdp %>% mutate(gdp_ipca = gdp*cumulative_inflation)
+munnicipalities_sectoral_gdp = munnicipalities_sectoral_gdp %>% subset(select = -cumulative_inflation) %>% drop_na(gdp)
+munnicipalities_sectoral_gdp = full_join(munnicipalities_sectoral_gdp,population_municipalities, by = c('year','id_municipality'))
+munnicipalities_sectoral_gdp = munnicipalities_sectoral_gdp %>% 
+  subset(select = c(year,id_municipality,id_immediate_region,id_state,population,sector,gdp,gdp_deflator,gdp_ipca))
+munnicipalities_sectoral_gdp = munnicipalities_sectoral_gdp %>% 
+  mutate(gdppc_deflator = (gdp_deflator*10^3)/population, gdppc_ipca = (gdp_ipca*10^3)/population)
+munnicipalities_sectoral_gdp = munnicipalities_sectoral_gdp %>% drop_na(gdp)
+munnicipalities_sectoral_gdp = munnicipalities_sectoral_gdp %>% arrange(id_municipality,year)
+write.csv(munnicipalities_sectoral_gdp,file = paste0(clean_data,'munnicipalities_sectoral_gdp','.csv'))
+
+munnicipalities_gdp = munnicipalities_sectoral_gdp %>% filter(sector == 'Produto Interno Bruto a preços correntes (Mil Reais)')
+munnicipalities_gdp = munnicipalities_gdp %>% subset(select = -sector)
+write.csv(munnicipalities_gdp,file = paste0(clean_data,'munnicipalities_gdp','.csv'))
+
+## Bolsa Familia Program ##
+bolsa_familia.R = fread(paste0(datasets_directory,'/misocial.txt')) %>% tibble() %>% clean_names()
+bolsa_familia = bolsa_familia.R %>% mutate(year = str_extract(anomes, "^.{4}"), month = str_extract(anomes, '.{2}$'), 
+                                           day = 1, date = make_date(year, month, day))
+bolsa_familia = bolsa_familia %>% 
+  subset(select = c(date,year,ibge,valor_repassado_bolsa_familia,qtd_familias_beneficiarias_bolsa_familia))
+bolsa_familia = bolsa_familia %>% setnames(c('date','year','id_municipality_6n','cash_transfers','families'))
+bolsa_familia = full_join(bolsa_familia,municipalities_codes_6n, by = 'id_municipality_6n')
+bolsa_familia[,c(2:5)] = lapply(bolsa_familia[,c(2:5)], function(x) as.numeric(as.character(x)))
+bolsa_familia = bolsa_familia %>% group_by(year,id_municipality) %>% 
+  summarise(cash_transfers = sum(cash_transfers),average_families = sum(families)/12) %>% ungroup()
+bolsa_familia = full_join(bolsa_familia,population_municipalities, by = c('year','id_municipality'))
+bolsa_familia = full_join(bolsa_familia,ipca_yearly, by = 'year')
+bolsa_familia = bolsa_familia %>% mutate(ipca_cash_transfers = cash_transfers*cumulative_inflation)
+bolsa_familia = bolsa_familia %>% mutate(cash_transfers_pc = cash_transfers/population,
+                                         ipca_cash_transfers_pc = ipca_cash_transfers/population)
+bolsa_familia = bolsa_familia %>% 
+  subset(select = c(year,id_municipality,id_immediate_region,id_state,population,average_families,
+                    cash_transfers,cash_transfers_pc,ipca_cash_transfers,ipca_cash_transfers_pc))
+write.csv(bolsa_familia,file = paste0(clean_data,'bolsa_familia','.csv'))
+
+## Distribuicao Renda PNAD ##
+pnad_total_income.R = fread(paste0(datasets_directory,'/massa_grupo.csv')) %>% tibble() %>% clean_names()
+pnad_mean_income.R = fread(paste0(datasets_directory,'/rend_domiciliar_pc_grupo.csv')) %>% tibble() %>% clean_names()
+pnad_upperbound_income.R = fread(paste0(datasets_directory,'/lim_sup_grupo.csv')) %>% tibble() %>% clean_names()
+pnad_group_population.R = fread(paste0(datasets_directory,'/populacao_grupo.csv')) %>% tibble() %>% clean_names()
+
+pnad_total_income = pnad_total_income.R %>% subset(select = -c(2,3))
+colnames(pnad_total_income)[c(1,2)] = c('id_state','income_group')
+pnad_total_income = pnad_total_income %>% gather(year, total_income, x2012:x2020, factor_key = TRUE) %>% tibble()
+pnad_total_income = pnad_total_income %>% subset(select = c(year,id_state,income_group,total_income))
+pnad_total_income[,1] = lapply(pnad_total_income[,1], function(x) as.character(gsub("x", "", x)))
+pnad_total_income[,c(1,2,4)] = lapply(pnad_total_income[,c(1,2,4)], function(x) as.numeric(as.character(x)))
+pnad_total_income = right_join(pnad_total_income,ipca_yearly, by = 'year')
+pnad_total_income = pnad_total_income %>% drop_na(total_income)
+pnad_total_income = pnad_total_income %>% mutate(ipca_total_income = total_income*cumulative_inflation)
+pnad_total_income = pnad_total_income %>% subset(select = -cumulative_inflation)
+write.csv(pnad_total_income,file = paste0(clean_data,'pnad_total_income','.csv'))
+
+pnad_mean_income = pnad_mean_income.R %>% subset(select = -c(2,3))
+colnames(pnad_mean_income)[c(1,2)] = c('id_state','income_group')
+pnad_mean_income = pnad_mean_income %>% gather(year, mean_income, x2012:x2020, factor_key = TRUE) %>% tibble()
+pnad_mean_income = pnad_mean_income %>% subset(select = c(year,id_state,income_group,mean_income))
+pnad_mean_income[,1] = lapply(pnad_mean_income[,1], function(x) as.character(gsub("x", "", x)))
+pnad_mean_income[,c(1,2,4)] = lapply(pnad_mean_income[,c(1,2,4)], function(x) as.numeric(as.character(x)))
+pnad_mean_income = right_join(pnad_mean_income,ipca_yearly, by = 'year')
+pnad_mean_income = pnad_mean_income %>% drop_na(mean_income)
+pnad_mean_income = pnad_mean_income %>% mutate(ipca_mean_income = mean_income*cumulative_inflation)
+pnad_mean_income = pnad_mean_income %>% subset(select = -cumulative_inflation)
+write.csv(pnad_mean_income,file = paste0(clean_data,'pnad_mean_income','.csv'))
+
+pnad_upperbound_income = pnad_upperbound_income.R %>% subset(select = -c(2,3))
+colnames(pnad_upperbound_income)[c(1,2)] = c('id_state','income_group')
+pnad_upperbound_income = pnad_upperbound_income %>% gather(year, upperbound_income, x2012:x2020, factor_key = TRUE) %>% tibble()
+pnad_upperbound_income = pnad_upperbound_income %>% subset(select = c(year,id_state,income_group,upperbound_income))
+pnad_upperbound_income[,1] = lapply(pnad_upperbound_income[,1], function(x) as.character(gsub("x", "", x)))
+pnad_upperbound_income[,c(1,2,4)] = lapply(pnad_upperbound_income[,c(1,2,4)], function(x) as.numeric(as.character(x)))
+pnad_upperbound_income = right_join(pnad_upperbound_income,ipca_yearly, by = 'year')
+pnad_upperbound_income = pnad_upperbound_income %>% drop_na(upperbound_income)
+pnad_upperbound_income = pnad_upperbound_income %>% mutate(ipca_upperbound_income = upperbound_income*cumulative_inflation)
+pnad_upperbound_income = pnad_upperbound_income %>% subset(select = -cumulative_inflation)
+write.csv(pnad_upperbound_income,file = paste0(clean_data,'pnad_upperbound_income','.csv'))
+
+pnad_group_population = pnad_group_population.R %>% subset(select = -c(2,3))
+colnames(pnad_group_population)[c(1,2)] = c('id_state','income_group')
+pnad_group_population = pnad_group_population %>% gather(year, group_population, x2012:x2020, factor_key = TRUE) %>% tibble()
+pnad_group_population = pnad_group_population %>% subset(select = c(year,id_state,income_group,group_population))
+pnad_group_population[,1] = lapply(pnad_group_population[,1], function(x) as.character(gsub("x", "", x)))
+pnad_group_population[,c(1,2,4)] = lapply(pnad_group_population[,c(1,2,4)], function(x) as.numeric(as.character(x)))
+pnad_group_population = pnad_group_population %>% drop_na(group_population)
+write.csv(pnad_group_population,file = paste0(clean_data,'pnad_group_population','.csv'))
+
+## Emprego e Instrução ##
+unemployment_age.R = fread(paste0(datasets_directory,'/desemprego_idade.csv'),header = FALSE, sep = ',') %>% tibble()
+unemployment_age = unemployment_age.R[-1,-c(3)]
+unemployment_age = unemployment_age %>% setnames(c('quarter','id_state','age_group','total_people','occupied','non_occupied','no_working'))
+unemployment_age = unemployment_age %>% mutate(year = str_extract(quarter, '.{4}$'), quarter = str_extract(quarter, "^.{1}"))
+unemployment_age[,c(1,2,4:8)] = lapply(unemployment_age[,c(1,2,4:8)], function(x) as.numeric(as.character(x)))
+unemployment_age = right_join(unemployment_age,states_codes, by = 'id_state')
+unemployment_age = unemployment_age %>% subset(select = c(year,quarter,id_state,age_group,total_people,occupied,non_occupied,no_working))
+unemployment_age = unemployment_age %>% mutate(unemployment_rate = (non_occupied/(non_occupied+occupied))*100)
+unemployment_age = unemployment_age %>% drop_na()
+unemployment = unemployment_age %>% filter(age_group == 'Total') %>% subset(select = -age_group)
+write.csv(unemployment_age,file = paste0(clean_data,'unemployment_age','.csv'))
+write.csv(unemployment,file = paste0(clean_data,'unemployment','.csv'))
+
+education_level.R = fread(paste0(datasets_directory,'/populacao_por_instrucao.csv'),header = FALSE, sep = ',') %>% tibble()
+education_level = education_level.R[-c(1:3),-c(3)]
+education_level = education_level %>% setnames(c('year','id_state','education_level','group_people'))
+education_level[,c(1,2,4)] = lapply(education_level[,c(1,2,4)], function(x) as.numeric(as.character(x)))
+education_level = right_join(education_level,states_codes, by = 'id_state')
+education_level = education_level %>% subset(select = c(year,id_state,nivel_instrucao,group_people))
+education_level = education_level %>% drop_na() %>% filter(education_level != 'Total')
+education_level = education_level %>% arrange(year,id_state) %>% subset(select = -code_state)
+education_level = education_level %>% group_by(year,id_state) %>% 
+  mutate(population_pct = (group_people/sum(group_people))*100) %>% ungroup()
+write.csv(education_level,file = paste0(clean_data,'education_level','.csv'))
+
+## Deforestation - Prodes ##
+prodes.R = fread(paste0(datasets_directory,'data_prodes.csv'), sep = ';') %>% tibble()
+prodes.R = prodes.R %>% arrange(uf)
+prodes = prodes.R %>% setnames(c('year','deforestation_increase','code_state'))
+prodes[,3] = rep(c('AC','AP','AM','MA','MT','PA','RO','RR','TO'), each = 34)
+prodes[,2] = lapply(prodes[,2], function(x) as.character(gsub(",", "", x)))
+prodes[,c(1,2)] = lapply(prodes[,c(1,2)], function(x) as.numeric(as.character(x)))
+prodes = right_join(prodes,states_codes, by = 'code_state') %>% drop_na(year) 
+prodes = prodes %>% subset(select = c(year,id_state,deforestation_increase))
+write.csv(prodes,file = paste0(clean_data,'prodes','.csv'))
+
+prodes_yearly = prodes %>% group_by(year) %>% summarise(deforestation_increase = sum(deforestation_increase))
+write.csv(prodes_yearly,file = paste0(clean_data,'prodes_yearly','.csv'))
+
+deforestation_alert_cities.R = read.xlsx(paste0(datasets_directory,'/mun_prioritarios.xlsx'),1) %>% tibble()
+deforestation_alert_cities = deforestation_alert_cities.R
+deforestation_alert_cities = full_join(deforestation_alert_cities,municipalities_codes, by = 'name_municipality')
+deforestation_alert_cities = deforestation_alert_cities %>% filter(code_state %in% c('AP','AM','AC','PA','RO','RR','TO','MA','MT'))
+deforestation_alert_cities = deforestation_alert_cities %>% drop_na(year_enter)
+deforestation_alert_cities = deforestation_alert_cities %>% subset(select = c(id_municipality,name_municipality,id_state,2:4))
+write.csv(deforestation_alert_cities,file = paste0(clean_data,'deforestation_alert_cities','.csv'))
+
+## Land Use - MapBiomas ##
+mapbiomas.R = read.xlsx(paste0(datasets_directory,'mapbiomas_base.xlsx'),3) %>% tibble()
+mapbiomas = mapbiomas.R %>% subset(select = c(3,1,7:11,14:49)) %>% clean_names()
+colnames(mapbiomas)[c(1:7)] = c('id_municipality','code_state','level_zero','level_one','level_two','level_three','level_four')
+mapbiomas[,c(1,8:43)] = lapply(mapbiomas[,c(1,8:43)], function(x) as.numeric(as.character(x)))
+mapbiomas = full_join(mapbiomas,immediate_region_codes, by = c('id_municipality'))
+mapbiomas = mapbiomas %>% subset(select = c(id_municipality,id_immediate_region,id_state,level_zero:x2020))
+mapbiomas = mapbiomas %>% gather(year, area, x1985:x2020, factor_key=FALSE)
+mapbiomas = mapbiomas %>% subset(select = c(year,id_municipality,id_immediate_region,id_state,4:8,area))
+mapbiomas[,1] = lapply(mapbiomas[,1], function(x) as.character(gsub("x", "", x)))
+mapbiomas[,1] = lapply(mapbiomas[,1], function(x) as.numeric(as.character(x)))
+mapbiomas[,10] = mapbiomas[,10]/100
+mapbiomas = mapbiomas %>% drop_na()
+write.csv(mapbiomas,file = paste0(clean_data,'mapbiomas','.csv'))
+
+mapbiomas_states = mapbiomas %>% group_by(year,id_state,level_zero,level_one,level_two,level_three,level_four) %>% 
+  drop_na() %>% summarise(area = sum(area)) %>% ungroup() %>% arrange(year,id_state,level_one)
+write.csv(mapbiomas_states,file = paste0(clean_data,'mapbiomas_states','.csv'))
+
+mapbiomas_levelzero = mapbiomas %>% group_by(year,id_municipality,id_state,level_zero) %>%
+  summarise(area = sum(area)) %>% ungroup()
+mapbiomas_levelone = mapbiomas %>% group_by(year,id_municipality,id_state,level_zero,level_one) %>%
+  summarise(area = sum(area)) %>% ungroup() %>% arrange(year,id_municipality,level_one)
+write.csv(mapbiomas_levelzero,file = paste0(clean_data,'mapbiomas_levelzero','.csv'))
+write.csv(mapbiomas_levelone,file = paste0(clean_data,'mapbiomas_levelone','.csv'))
+
+## PPM ##
+ppm.R = fread(paste0(datasets_directory,'tabela3939_rebanho-efetivo.csv'),encoding = 'UTF-8') %>% tibble() %>% clean_names()
+ppm = ppm.R %>% setnames(c('id_municipality','year','herd_type','headcount'))
+ppm = full_join(ppm,immediate_region_codes, by = 'id_municipality')
+ppm = ppm %>% subset(select = c(year,id_municipality,id_immediate_region,id_state,herd_type,headcount))
+ppm[,c(1:4,6)] = lapply(ppm[,c(1:4,6)], function(x) as.numeric(as.character(x)))
+ppm$headcount[is.na(ppm$headcount)] = 0
+write.csv(ppm,file = paste0(clean_data,'ppm','.csv'))
+
+
