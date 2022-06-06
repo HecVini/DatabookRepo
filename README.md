@@ -8,7 +8,7 @@ Also, you can see every dataset coluns description [here](https://1drv.ms/b/s!Aj
 ![Cover Page](/ColumnsDescriptionCover.png?raw=true "Subtitle") <br/>
 Raw data use used to create all datasets are available [right here](https://1drv.ms/u/s!AjVW0s-wFcYmhYNdqlktfMMA9XEUUA?e=u5fEJp). <br/>
 
-This repository is always going trhough updates. This is only de V.1 version - yes, the only first. If you notice some inconsistencies, please notify me. May you have comments or concerns, please, contact me. <br/>
+This repository is always going trhough updates. This is only the V1.0 version - yes, the only first. If you notice some inconsistencies, please notify me. May you have comments or concerns, please, contact me. <br/>
 
 You can find me on Twitter [(@hec_vini)](https://twitter.com/hec_vini) or [LinkedIn](https://www.linkedin.com/in/viniciushpires/). <br/>
 You can also e-mail me to: vinicius.hector@outlook.com <br/>
