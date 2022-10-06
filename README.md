@@ -1,7 +1,7 @@
 # DatabookRepo
 
-Welcome to my data repository! <br/> For the last months, I have been working a lot with exploratory data analysis on the Brazilian reality (socioeconomic and environmental), country profiles, and greenhouses gases emissions. Although every data available here is public, I hope I can help you by displaying it in a clean and more organized format. This is a repository with 54 datasets  <br/>
-I have prepared a complete data description document with data sources, tips, and alerts. This might be useful (and save a lot of time) especially when dealing with a bulk of GHG inventories and its methodological details. Also, these datasets might be useful to work with Brazilian numbers. Every data source is linked on the document below. <br/>
+Welcome to my data repository! <br/> For the last months, I have been working a lot with exploratory data analysis on Brazilian data (socioeconomic and environmental), country profiles, and greenhouses gases emissions. Although every data available here is public, I hope I can help you by displaying it in a clean and more organized format. This is a repository with 54 datasets  <br/>
+I have prepared a complete data description document with data sources, tips, and alerts. This might be useful (and save a lot of time), especially when dealing with a bulk of GHG inventories and its methodological details. Also, these datasets might be useful to work with Brazilian numbers. Every data source is linked on the document below. <br/>
 
 You can find all 54 cleaned datasets just [here](https://1drv.ms/u/s!AjVW0s-wFcYmhYNcpRwg-rKzRyQI_A?e=qiRv0b). <br/>
 Also, you can see every dataset coluns description [here](https://1drv.ms/b/s!AjVW0s-wFcYmhYQUfK_isaDDRLsApw?e=Yw3XB0). <br/>
@@ -13,7 +13,7 @@ This repository is always going trhough updates. This is only the V1.0 version -
 You can find me on Twitter [(@hec_vini)](https://twitter.com/hec_vini) or [LinkedIn](https://www.linkedin.com/in/viniciushpires/). <br/>
 You can also e-mail me to: vinicius.hector@outlook.com <br/>
 
-I hope that this repo help you all on your research! Colaboration leads us to great places.
+I hope that this repo help you all on your research! Colaboration leads us to great places. Future versions of this project will include a more organized README file, I promess.
 
 
 
